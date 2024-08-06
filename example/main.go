@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/andyfusniak/templatebox"
 )
@@ -16,24 +17,44 @@ func main() {
 
 func run() error {
 	// Create a new Box from the OS filesystem.
-	box, err := templatebox.NewBoxFromOSDir("./testdata/templates")
+	box, err := templatebox.NewBoxFromOSDir("./testdata/templates", nil)
 	if err != nil {
 		return fmt.Errorf("templatebox.NewBoxFromOSDir failed: %w", err)
 	}
 
 	// Add a template to the Box.
-	err = box.AddTemplate("hello", templatebox.FileSet{
-		Filenames: []string{"layout.html", "hello.html"},
+	// err = box.AddTemplate("hello", templatebox.FileSet{
+	// 	Filenames: []string{"layout.html", "hello.html"},
+	// })
+	// if err != nil {
+	// 	return fmt.Errorf("box.AddTemplate failed: %w", err)
+	// }
+	box.SetGlobalFuncMap(templatebox.FuncMap{
+		"upper": strings.ToUpper,
+	})
+
+	err = box.AddTemplateMap(map[string]templatebox.FileSet{
+		"apples": {
+			Filenames: []string{"layout.html", "apples.html"},
+			// FuncMap: templatebox.FuncMap{
+			// 	"upper": strings.ToUpper,
+			// },
+		},
+		"hello": {
+			Filenames: []string{"layout.html", "hello.html"},
+		},
 	})
 	if err != nil {
-		return fmt.Errorf("box.AddTemplate failed: %w", err)
+		return fmt.Errorf("box.AddTemplateMap failed: %w", err)
 	}
-
 	// Render the template.
 	data := map[string]interface{}{
 		"Name": "World!",
 	}
 	if err := box.RenderHTML(os.Stdout, "hello", data); err != nil {
+		return fmt.Errorf("box.RenderHTML failed: %w", err)
+	}
+	if err := box.RenderHTML(os.Stdout, "apples", data); err != nil {
 		return fmt.Errorf("box.RenderHTML failed: %w", err)
 	}
 

@@ -16,29 +16,70 @@ type FuncMap map[string]any
 // Box is a collection of templates and a global FuncMap that can be used to
 // render templates loaded from the filesystem or embed.FS.
 type Box struct {
+	cfg           *Config
 	fs            *embed.FS
 	templateDir   string
 	globalFuncMap FuncMap
 
 	mu   sync.RWMutex
 	html map[string]*template.Template
+
+	// set of name to template map to be used for rebuilding the template
+	// upon every request
+	muHTMLRerender        sync.RWMutex
+	rerenderTemplatesHTML map[string]FileSet
+
+	muRawRerender        sync.RWMutex
+	rerenderTemplatesRaw map[string]TemplateSet
 }
 
-// NewBoxFromFS creates a new Box with the given embed.FS.
-func NewBoxFromFSDir(fs *embed.FS, templateDir string) (*Box, error) {
+// Config is a configuration struct for creating a new Box. The Debug field
+// is used to enable debug mode. In debug mode the Box will check
+// if the template needs to be rebuilt before rendering it. This is useful
+// during development to avoid restarting the application when a template
+// changes.
+type Config struct {
+	Debug bool
+}
+
+// default config
+var defaultConfig = &Config{
+	Debug: false,
+}
+
+// NewBoxFromFS creates a new Box with the given embed.FS. The templateDir
+// is the directory within the embed.FS where the templates are located. The
+// Box will use the embed.FS to read the templates. If the embed.FS is nil
+// then an error is returned. The Box will use the default configuration if
+// cfg is nil. The default configuration has Debug set to false.
+func NewBoxFromFSDir(fs *embed.FS, templateDir string, cfg *Config) (*Box, error) {
+	if cfg == nil {
+		cfg = defaultConfig
+	}
+
 	if fs == nil {
 		return nil, fmt.Errorf("embed.FS cannot be nil")
 	}
-	return &Box{
+	box := Box{
+		cfg:         cfg,
 		fs:          fs,
 		templateDir: templateDir,
 		html:        make(map[string]*template.Template),
-	}, nil
+	}
+	if cfg.Debug {
+		box.rerenderTemplatesHTML = make(map[string]FileSet)
+		box.rerenderTemplatesRaw = make(map[string]TemplateSet)
+	}
+	return &box, nil
 }
 
 // NewBoxFromOSDir creates a new Box for the OS filesystem at the given
 // templateDir.
-func NewBoxFromOSDir(templateDir string) (*Box, error) {
+func NewBoxFromOSDir(templateDir string, cfg *Config) (*Box, error) {
+	if cfg == nil {
+		cfg = defaultConfig
+	}
+
 	// ensure the templateDir exists
 	_, err := os.Stat(templateDir)
 	if err != nil {
@@ -48,10 +89,16 @@ func NewBoxFromOSDir(templateDir string) (*Box, error) {
 		return nil, fmt.Errorf("os.Stat failed: %w", err)
 	}
 
-	return &Box{
+	box := Box{
+		cfg:         cfg,
 		templateDir: templateDir,
 		html:        make(map[string]*template.Template),
-	}, nil
+	}
+	if cfg.Debug {
+		box.rerenderTemplatesHTML = make(map[string]FileSet)
+		box.rerenderTemplatesRaw = make(map[string]TemplateSet)
+	}
+	return &box, nil
 }
 
 // FileSet is a set of template files and a FuncMap. The FuncMap is used to
@@ -68,8 +115,8 @@ type TemplateSet struct {
 	FuncMap   FuncMap
 }
 
-// GlobalFuncMap sets the global FuncMap available to all templates.
-func (b *Box) GlobalFuncMap(g FuncMap) {
+// SetGlobalFuncMap sets the global FuncMap available to all templates.
+func (b *Box) SetGlobalFuncMap(g FuncMap) {
 	b.globalFuncMap = g
 }
 
@@ -81,6 +128,7 @@ func (b *Box) GlobalFuncMap(g FuncMap) {
 // FileSet is added to the template.
 func (b *Box) AddTemplateMap(m map[string]FileSet) error {
 	for k, v := range m {
+		fmt.Printf("%#v\n", v)
 		if err := b.AddTemplate(k, v); err != nil {
 			return err
 		}
@@ -135,6 +183,14 @@ func (b *Box) AddTemplate(name string, s FileSet) error {
 	b.mu.Lock()
 	b.html[name] = t
 	b.mu.Unlock()
+
+	// keep a copy of the FileSet to be used for rebuilding the template
+	// upon every call to RenderHTML
+	if b.cfg.Debug {
+		b.muHTMLRerender.Lock()
+		b.rerenderTemplatesHTML[name] = s
+		b.muHTMLRerender.Unlock()
+	}
 	return nil
 }
 
@@ -171,6 +227,13 @@ func (b *Box) AddTemplateRaw(name string, s TemplateSet) error {
 	b.html[name] = t
 	b.mu.Unlock()
 
+	// keep a copy of the TemplateSet to be used for rebuilding the template
+	// upon every call to RenderRaw
+	if b.cfg.Debug {
+		b.muRawRerender.Lock()
+		b.rerenderTemplatesRaw[name] = s
+		b.muRawRerender.Unlock()
+	}
 	return nil
 }
 
@@ -181,6 +244,18 @@ func (b *Box) AddTemplateRaw(name string, s TemplateSet) error {
 // otherwise an error is returned. The name of the template is the key used to
 // add the template to the Box.
 func (b *Box) RenderHTML(w io.Writer, name string, data any) error {
+	if b.cfg.Debug {
+		// check if the template needs to be rebuilt
+		b.muHTMLRerender.RLock()
+		r, ok := b.rerenderTemplatesHTML[name]
+		b.muHTMLRerender.RUnlock()
+		if ok {
+			if err := b.AddTemplate(name, r); err != nil {
+				return fmt.Errorf("rebuild template failed: %w", err)
+			}
+		}
+	}
+
 	b.mu.RLock()
 	t, ok := b.html[name]
 	b.mu.RUnlock()
