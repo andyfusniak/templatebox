@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // FuncMap is a map of functions that can be added to a template.
@@ -18,7 +19,9 @@ type Box struct {
 	fs            *embed.FS
 	templateDir   string
 	globalFuncMap FuncMap
-	html          map[string]*template.Template
+
+	mu   sync.RWMutex
+	html map[string]*template.Template
 }
 
 // NewBoxFromFS creates a new Box with the given embed.FS.
@@ -58,11 +61,11 @@ type FileSet struct {
 	FuncMap   FuncMap
 }
 
-// StringSet is a set of template strings and a FuncMap. The FuncMap is used to
+// TemplateSet is a set of template strings and a FuncMap. The FuncMap is used to
 // add functions to that template.
-type StringSet struct {
-	HTML    []string
-	FuncMap FuncMap
+type TemplateSet struct {
+	Templates []string
+	FuncMap   FuncMap
 }
 
 // GlobalFuncMap sets the global FuncMap available to all templates.
@@ -99,7 +102,9 @@ func (b *Box) AddTemplate(name string, s FileSet) error {
 	if b.globalFuncMap != nil {
 		t = t.Funcs(template.FuncMap(b.globalFuncMap))
 	}
-	t = t.Funcs(template.FuncMap(s.FuncMap))
+	if s.FuncMap != nil {
+		t = t.Funcs(template.FuncMap(s.FuncMap))
+	}
 
 	// all templates filenames within the FileSet must be relative to the
 	// templateDir
@@ -127,13 +132,45 @@ func (b *Box) AddTemplate(name string, s FileSet) error {
 		return fmt.Errorf("add template failed: %w", err)
 	}
 
-	// use go's template package to get the name of each of
-	// the templates in the template set
-	for _, tmpl := range t.Templates() {
-		fmt.Println("name=", tmpl.Name())
+	b.mu.Lock()
+	b.html[name] = t
+	b.mu.Unlock()
+	return nil
+}
+
+// AddTemplateRaw accepts a name and a TemplateSet and adds the template
+// to the Box. The name is the key used to add the template to the Box. The
+// TemplateSet must contain at least one template string. The first template
+// string in the TemplateSet is used as the name of the template. The FuncMap
+// in the TemplateSet is added to the template. The template is parsed using
+// the html/template package.
+func (b *Box) AddTemplateRaw(name string, s TemplateSet) error {
+	if len(s.Templates) == 0 {
+		return fmt.Errorf("no templates provided")
 	}
 
+	// initialise the template with the first template string in the TemplateSet
+	t := template.New(name)
+	if b.globalFuncMap != nil {
+		t = t.Funcs(template.FuncMap(b.globalFuncMap))
+	}
+	if s.FuncMap != nil {
+		t = t.Funcs(template.FuncMap(s.FuncMap))
+	}
+
+	for i, tmplStr := range s.Templates {
+		var err error
+		t, err = t.Parse(tmplStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse template %s at index %d: %w\nTemplate content:\n%s",
+				name, i, err, tmplStr)
+		}
+	}
+
+	b.mu.Lock()
 	b.html[name] = t
+	b.mu.Unlock()
+
 	return nil
 }
 
@@ -144,7 +181,9 @@ func (b *Box) AddTemplate(name string, s FileSet) error {
 // otherwise an error is returned. The name of the template is the key used to
 // add the template to the Box.
 func (b *Box) RenderHTML(w io.Writer, name string, data any) error {
+	b.mu.RLock()
 	t, ok := b.html[name]
+	b.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("template %s not found", name)
 	}

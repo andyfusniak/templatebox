@@ -20,7 +20,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("templatebox.NewBoxFromOSDir failed: %w", err)
 	}
-	fmt.Printf("%#v\n", box)
 
 	// Add a template to the Box.
 	err = box.AddTemplate("hello", templatebox.FileSet{
@@ -35,6 +34,30 @@ func run() error {
 		"Name": "World!",
 	}
 	if err := box.RenderHTML(os.Stdout, "hello", data); err != nil {
+		return fmt.Errorf("box.RenderHTML failed: %w", err)
+	}
+
+	err = box.AddTemplateRaw("greetings", templatebox.TemplateSet{
+		Templates: []string{
+			`<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta http-equiv="X-UA-Compatible" content="IE=edge">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>Greetings</title>
+			</head>
+			<body>
+				{{ template "content" . }}
+			</body>
+			</html>
+		`, `{{ define "content" }}hello{{ end }}{{ define "apples" }}apples{{ end }}`},
+	})
+	if err != nil {
+		return fmt.Errorf("box.AddTemplateRaw failed: %w", err)
+	}
+
+	if err := box.RenderHTML(os.Stdout, "greetings", nil); err != nil {
 		return fmt.Errorf("box.RenderHTML failed: %w", err)
 	}
 
