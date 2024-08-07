@@ -104,13 +104,13 @@ The `hello.html` file might look like this:
 
 In those files, the `layout.html` file references the `hello.html` file using the `template` action. The `hello.html` file uses the `Name` field from the data passed to the template. The `uppr` function converts the `Name` field to uppercase. These files are Go templates and are not modified by templatebox.
 
+
 ### Rendering Templates
 
 The `RenderHTML(w io.Writer, name string, data any)` method accepts an `io.Writer`, the name of the template to render, and data to pass to the template. This method renders the HTML template to the writer.
 
 In the example code below, the `RenderHTML` method writes to standard output.
 ```go
-
 data := map[string]interface{}{
     "Name": "World!",
 }
@@ -134,3 +134,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
     }
 }
 ```
+
+### Thread Safety
+
+The `Box` struct is safe for concurrent use. The `Box` struct is immutable after creation, so you can safely use it across multiple goroutines without any issues.
+Internally, templatebox uses a `sync.RWMutex` to protect the box from concurrent reads and writes.
