@@ -28,9 +28,6 @@ type Box struct {
 	// upon every request
 	muHTMLRerender        sync.RWMutex
 	rerenderTemplatesHTML map[string]FileSet
-
-	muRawRerender        sync.RWMutex
-	rerenderTemplatesRaw map[string]TemplateSet
 }
 
 // Config is a configuration struct for creating a new Box. The Debug field
@@ -68,7 +65,6 @@ func NewBoxFromFSDir(fs *embed.FS, templateDir string, cfg *Config) (*Box, error
 	}
 	if cfg.Debug {
 		box.rerenderTemplatesHTML = make(map[string]FileSet)
-		box.rerenderTemplatesRaw = make(map[string]TemplateSet)
 	}
 	return &box, nil
 }
@@ -96,7 +92,6 @@ func NewBoxFromOSDir(templateDir string, cfg *Config) (*Box, error) {
 	}
 	if cfg.Debug {
 		box.rerenderTemplatesHTML = make(map[string]FileSet)
-		box.rerenderTemplatesRaw = make(map[string]TemplateSet)
 	}
 	return &box, nil
 }
@@ -128,7 +123,6 @@ func (b *Box) SetGlobalFuncMap(g FuncMap) {
 // FileSet is added to the template.
 func (b *Box) AddTemplateMap(m map[string]FileSet) error {
 	for k, v := range m {
-		fmt.Printf("%#v\n", v)
 		if err := b.AddTemplate(k, v); err != nil {
 			return err
 		}
@@ -227,14 +221,17 @@ func (b *Box) AddTemplateRaw(name string, s TemplateSet) error {
 	b.html[name] = t
 	b.mu.Unlock()
 
-	// keep a copy of the TemplateSet to be used for rebuilding the template
-	// upon every call to RenderRaw
-	if b.cfg.Debug {
-		b.muRawRerender.Lock()
-		b.rerenderTemplatesRaw[name] = s
-		b.muRawRerender.Unlock()
-	}
 	return nil
+}
+
+// Config returns the Box configuration.
+func (b *Box) Config() *Config {
+	return b.cfg
+}
+
+// TemplateDir returns the template directory.
+func (b *Box) TemplateDir() string {
+	return b.templateDir
 }
 
 // RenderHTML renders the named template to the given io.Writer with the given
@@ -247,11 +244,13 @@ func (b *Box) RenderHTML(w io.Writer, name string, data any) error {
 	if b.cfg.Debug {
 		// check if the template needs to be rebuilt
 		b.muHTMLRerender.RLock()
-		r, ok := b.rerenderTemplatesHTML[name]
+		s1, ok := b.rerenderTemplatesHTML[name]
 		b.muHTMLRerender.RUnlock()
-		if ok {
-			if err := b.AddTemplate(name, r); err != nil {
-				return fmt.Errorf("rebuild template failed: %w", err)
+
+		// only rebuild from OS filesystem (embed.FS is read-only)
+		if ok && b.fs == nil {
+			if err := b.AddTemplate(name, s1); err != nil {
+				return fmt.Errorf("rebuild HTML template failed: %w", err)
 			}
 		}
 	}

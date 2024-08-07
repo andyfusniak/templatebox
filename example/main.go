@@ -1,3 +1,18 @@
+//go:build ignore
+// +build ignore
+
+// This is an example of how to use the templatebox package.
+//
+// The example demonstrates how to create a new Box from the OS filesystem
+// and render a template.
+//
+// The example uses the following directory structure:
+//
+//	testdata/
+//	└── templates/
+//	    ├── layout.html
+//	    ├── hello.html
+//	    └── apples.html
 package main
 
 import (
